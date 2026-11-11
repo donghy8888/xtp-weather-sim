@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>西太平洋天气模拟器</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="map-wrap">
+  <canvas id="base"></canvas>
+  <canvas id="field"></canvas>
+  <canvas id="wind"></canvas>
+  <canvas id="over"></canvas>
+</div>
+
+<header id="top">
+  <div class="title">西太平洋天气模拟器 <span class="sub">原始方程大气模式 · 实时推演</span></div>
+  <div id="clock"><span id="date-str">载入中…</span><span id="year-str"></span></div>
+</header>
+
+<div id="loading"><div class="spin"></div><div id="load-msg">正在载入地图与气候资料、启动大气模式…</div></div>
+
+<aside id="layers" class="panel">
+  <div class="ph">图层</div>
+  <div class="grp">
+    <label><input type="radio" name="fill" value="temp" checked> 气温</label>
+    <label><input type="radio" name="fill" value="precip"> 降水</label>
+    <label><input type="radio" name="fill" value="tanom"> 气温距平</label>
+    <label><input type="radio" name="fill" value="sst"> 海温</label>
+    <label><input type="radio" name="fill" value="none"> 无填色</label>
+  </div>
+  <div class="grp">
+    <label><input type="checkbox" id="ly-rain" checked> 降水叠加</label>
+    <label><input type="checkbox" id="ly-slp" checked> 海平面气压</label>
+    <label><input type="checkbox" id="ly-z500" checked> 500hPa高度/588线</label>
+    <label><input type="checkbox" id="ly-wind" checked> 风场动画</label>
+    <select id="wind-lev"><option value="10">地面10米风</option><option value="500">500hPa风</option><option value="steer">引导气流(850-300)</option></select>
+  </div>
+  <div id="legend"></div>
+</aside>
+
+<aside id="info" class="panel">
+  <div class="ph">副热带高压 <span class="hint">(500hPa 588线)</span></div>
+  <div class="kv"><span>脊线</span><b id="wp-ridge">-</b></div>
+  <div class="kv"><span>西伸脊点</span><b id="wp-west">-</b></div>
+  <div class="kv"><span>北界</span><b id="wp-north">-</b></div>
+  <div class="kv"><span>面积指数</span><b id="wp-area">-</b></div>
+  <div class="ph" style="margin-top:8px">海温背景</div>
+  <div class="kv"><span>厄尔尼诺指数</span><b id="enso">-</b></div>
+  <div class="ph" style="margin-top:8px">寒潮监测</div>
+  <div id="events"><div class="muted">暂无</div></div>
+</aside>
+
+<div id="city" class="panel hidden">
+  <button id="city-close" class="x">×</button>
+  <div class="ch"><b id="city-name">-</b> <span id="city-coord" class="muted"></span></div>
+  <div id="city-now"></div>
+  <canvas id="city-chart"></canvas>
+  <div class="muted small">最近30天模拟：红线气温(°C)，蓝柱降水(mm/日)，灰线气压(hPa)</div>
+</div>
+
+<footer id="ctrl">
+  <button id="btn-play" class="big">⏸</button>
+  <div class="speeds">
+    <button data-sp="3600">1小时/秒</button>
+    <button data-sp="21600">6小时/秒</button>
+    <button data-sp="43200" class="on">半天/秒</button>
+    <button data-sp="86400">1天/秒</button>
+    <button data-sp="1e9">最快</button>
+  </div>
+  <div class="jump">
+    <select id="j-mon"></select><select id="j-day"></select>
+    <button id="btn-jump">跳到该日</button>
+  </div>
+  <div id="perf" class="muted small"></div>
+</footer>
+<div id="toast"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
