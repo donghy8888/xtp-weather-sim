@@ -80,10 +80,10 @@ async function loadWinter(name) {
     if (g[0] === 2) { for (let b = 1; b <= 4 && f - b >= 0; b++) if (fr[f - b].some(h => h[0] === 1 && Math.abs(h[2] - g[2]) < 0.5)) { vis = true; break; } }
     show[f].push(vis);
   }
-  let storms = [];
-  try { storms = await fetch(`data/w/${name}.ty.json`).then(r => r.ok ? r.json() : []); } catch (e) { storms = []; }
+  let storms = [], high = null;
+  try { const t = await fetch(`data/w/${name}.ty.json`).then(r => r.ok ? r.json() : []); if (Array.isArray(t)) storms = t; else { storms = t.storms || []; high = t.high || null; } } catch (e) { storms = []; }
   for (const st of storms) { st.h0 = st.track[0][0]; st.h1 = st.track[st.track.length - 1][0]; st.peak = Math.max(...st.track.map(p => p[3])); }
-  return { ...meta, NP, L, abs, show, name, storms };
+  return { ...meta, NP, L, abs, show, name, storms, high };
 }
 function pickWinter() {
   const want = new URLSearchParams(location.search).get('year'); if (want && !usedW.length && winterList.includes(want)) { usedW.push(want); return want; }
@@ -153,7 +153,7 @@ void main(){
   } else {
     float s0 = bl(tA0, ag, AS) * 255.0 / 8.0, s1 = bl(tA1, ag, AS) * 255.0 / 8.0;
     float se = mix(s0, s1, uFw); se = sqrt(se * se + tyS * tyS);
-    gl_FragColor = texture2D(tPal, vec2(se / 64.0, 0.8333));
+    gl_FragColor = texture2D(tPal, vec2(se / 80.0, 0.8333));
   }
 }`;
 function glInit() {
@@ -179,7 +179,7 @@ function glInit() {
     pal.set([c[0], c[1], c[2], 225], i * 4);
     const d = -20 + 40 * (i + 0.5) / PW, db = Math.floor(d / 2) * 2 + 1; const e = dColor(db);
     pal.set(e, (PW + i) * 4);
-    pal.set(windColor(64 * (i + 0.5) / PW), (2 * PW + i) * 4);
+    pal.set(windColor(80 * (i + 0.5) / PW), (2 * PW + i) * 4);
   }
   upload('tPal', PW, 3, pal, gl.RGBA);
   gl.uniform4f(U.uCg, tclim.lon0, tclim.lat0, tclim.res, tclim.nx);
@@ -200,7 +200,7 @@ const DSTOPS = [[-16, 30, 20, 140, 235], [-10, 40, 80, 220, 225], [-5, 90, 160, 
 // continuous wind-speed colour scale (m/s): many distinct hues, fine steps in light winds
 const WST = [[0, 228, 236, 252, 200], [1, 190, 208, 250, 210], [2, 140, 175, 245, 215], [3, 95, 140, 235, 220], [4, 60, 110, 215, 225], [5, 40, 155, 210, 225],
   [6, 35, 185, 170, 225], [7, 55, 195, 110, 228], [8, 120, 210, 60, 230], [9, 185, 220, 50, 232], [10, 235, 225, 50, 235], [12, 250, 190, 40, 238], [14, 245, 140, 35, 240],
-  [17, 230, 85, 40, 242], [20, 205, 35, 60, 245], [24, 165, 20, 120, 248], [28, 115, 20, 165, 250], [33, 75, 10, 130, 255], [42, 150, 40, 200, 255], [51, 235, 120, 235, 255], [64, 255, 225, 255, 255]];
+  [17, 232, 90, 40, 242], [21, 215, 45, 45, 245], [25, 185, 20, 75, 248], [29, 160, 15, 130, 250], [33, 125, 20, 165, 252], [42, 85, 25, 140, 255], [51, 175, 40, 200, 255], [60, 235, 100, 225, 255], [70, 255, 175, 240, 255], [80, 255, 240, 255, 255]];
 function windColor(v) {
   if (v <= 0) return WST[0].slice(1);
   for (let i = 1; i < WST.length; i++) if (v < WST[i][0]) { const p = WST[i - 1], q = WST[i], f = (v - p[0]) / (q[0] - p[0]); return [1, 2, 3, 4].map(k => Math.round(p[k] + (q[k] - p[k]) * f)); }
@@ -352,9 +352,38 @@ function tyWind(t, lon, lat) { // counter-clockwise circulation with ~20° inflo
 function tyCat(v) {
   return v >= 51 ? ['超强台风', '#d81bd8'] : v >= 41.5 ? ['强台风', '#e8204a'] : v >= 32.7 ? ['台风', '#ff7a1a'] : v >= 24.5 ? ['强热带风暴', '#f5c400'] : v >= 17.2 ? ['热带风暴', '#2fb5ff'] : ['热带低压', '#7fd36b'];
 }
+const pastCv = document.createElement('canvas'); let pastKey = '';
+function drawHigh(c, boxes) {
+  if (!$('ly-high').checked || !W_.high) return;
+  const H_ = W_.high, d = Math.max(0, Math.min(H_.days.length - 1, tf / W_.per)), d0 = Math.floor(d), d1 = Math.min(H_.days.length - 1, d0 + 1), w = d - d0;
+  const A = H_.days[d0], B = H_.days[d1], lonW = A[0] * (1 - w) + B[0] * w;
+  const pts = []; H_.lons.forEach((lon, i) => { if (lon >= lonW - 2) pts.push([Math.min(lon, 170), A[i + 1] * (1 - w) + B[i + 1] * w]); });
+  if (pts.length < 2) return;
+  c.setLineDash([7, 5]); c.lineWidth = 2; c.strokeStyle = 'rgba(150,40,190,0.85)'; c.beginPath();
+  // smooth: Catmull-Rom through the edge points
+  const P2 = pts.map(p => [X(p[0]), Y(p[1])]); c.moveTo(P2[0][0], P2[0][1]);
+  for (let i = 0; i < P2.length - 1; i++) { const p0 = P2[Math.max(0, i - 1)], p1 = P2[i], p2 = P2[i + 1], p3 = P2[Math.min(P2.length - 1, i + 2)];
+    c.bezierCurveTo(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6, p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]); }
+  c.stroke(); c.setLineDash([]);
+  const x = P2[0][0], y = P2[0][1]; c.font = '600 12px -apple-system,PingFang SC,sans-serif';
+  const t = '副高', tw = c.measureText(t).width + 10;
+  if (y > 80 && y < H - 100 && x > 4 && x < W - 40) { c.fillStyle = 'rgba(120,30,160,0.85)'; roundRect(c, x - tw - 4, y - 9, tw, 18, 9); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, x - tw + 1, y + 0.5); boxes.push([x - tw - 4, y - 9, tw, 18]); }
+}
 function drawTyphoons(c) {
-  if (!showTy()) return;
   const boxes = [];
+  drawHigh(c, boxes);
+  if (!showTy()) return;
+  // earlier storms of this year: thin faint full tracks with a small name
+  const h = tf * 24 / W_.per;
+  c.lineWidth = 1.2; c.lineCap = 'round';
+  const past = W_.storms.filter(st => st.h1 < h);
+  const key = W_.name + past.length + ',' + view.ox + ',' + view.oy + ',' + view.s + ',' + cFr.width + ',' + cFr.height;
+  if (pastKey !== key) { // cache the faint past tracks; redraw only when a storm ends or the view changes
+    pastKey = key; if (pastCv.width !== cFr.width || pastCv.height !== cFr.height) { pastCv.width = cFr.width; pastCv.height = cFr.height; }
+    const g = pastCv.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, W, H); g.lineWidth = 1.2; g.lineCap = 'round'; g.globalAlpha = 0.5;
+    for (const st of past) { const T = st.track; for (let k = 1; k < T.length; k++) { g.strokeStyle = tyCat(T[k - 1][3])[1]; g.beginPath(); g.moveTo(X(T[k - 1][1]), Y(T[k - 1][2])); g.lineTo(X(T[k][1]), Y(T[k][2])); g.stroke(); } }
+  }
+  c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(pastCv, 0, 0); c.setTransform(DPR, 0, 0, DPR, 0, 0);
   const hit = (x, y, w, h) => { if (y < 76 || y + h > H - 86 || x < 4 || x + w > W - 4) return true; for (const b of boxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return true; return false; };
   // tracks first
   for (const t of curTy) {
@@ -387,6 +416,15 @@ function drawTyphoons(c) {
     c.fillStyle = 'rgba(12,18,30,0.78)'; roundRect(c, pos[0], pos[1], w, h, 11); c.fill();
     c.fillStyle = col; c.fillRect(pos[0] + 7, pos[1] + 6, 3, h - 12);
     c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(txt, pos[0] + 14, pos[1] + h / 2 + 0.5);
+  }
+  c.font = '500 11px -apple-system,PingFang SC,sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+  for (const st of past) {
+    let k = 0; for (let i = 0; i < st.track.length; i++) if (st.track[i][3] >= st.peak - 0.01) { k = i; break; } // name at peak intensity
+    const x = X(st.track[k][1]) + 5, y = Y(st.track[k][2]), w = c.measureText(st.name).width + 2;
+    if (x < 4 || x + w > W - 4 || y < 84 || y > H - 96) continue;
+    if (boxes.some(b => x < b[0] + b[2] && x + w > b[0] && y - 7 < b[1] + b[3] && y + 7 > b[1])) continue;
+    boxes.push([x, y - 7, w, 14]);
+    c.lineWidth = 2.5; c.strokeStyle = 'rgba(0,0,0,0.45)'; c.strokeText(st.name, x, y); c.fillStyle = 'rgba(255,255,255,0.8)'; c.fillText(st.name, x, y);
   }
 }
 function drawFronts(f0, fw) {
@@ -557,9 +595,9 @@ function drawLegend() {
     for (const v of [-30, -20, -10, 0, 10, 20, 30, 40]) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v + 32) / 76 * 100) + '%'; ticks.appendChild(s); }
   } else if (mode === 'wind') {
     $('legend-title').textContent = '10米风速（米/秒）';
-    const pos = (v) => v <= 20 ? 0.72 * v / 20 : 0.72 + 0.28 * (v - 20) / 40, inv = (q) => q <= 0.72 ? 20 * q / 0.72 : 20 + 40 * (q - 0.72) / 0.28;
+    const pos = (v) => v <= 17 ? 0.38 * v / 17 : 0.38 + 0.62 * (v - 17) / 63, inv = (q) => q <= 0.38 ? 17 * q / 0.38 : 17 + 63 * (q - 0.38) / 0.62;
     for (let x = 0; x < w; x++) { const c = windColor(inv(x / w)); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
-    for (const v of [0, 2, 4, 6, 8, 10, 12, 15, 20, 30, 40, 50]) { const s = document.createElement('span'); s.textContent = v; s.style.left = (Math.max(1.5, Math.min(98, pos(v) * 100))) + '%'; ticks.appendChild(s); }
+    for (const v of (W < 900 ? [0, 5, 10, 17, 25, 33, 42, 51, 60, 70, 80] : [0, 2, 4, 6, 8, 10, 12, 14, 17, 25, 33, 42, 51, 60, 70, 80])) { const s = document.createElement('span'); s.textContent = v; s.style.left = (Math.max(1.5, Math.min(98, pos(v) * 100))) + '%'; ticks.appendChild(s); }
   } else {
     $('legend-title').textContent = '24小时变温（℃）：蓝色＝降温，红色＝升温';
     for (let x = 0; x < w; x++) { const v = -16 + 32 * x / w, c = dColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
