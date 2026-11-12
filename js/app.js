@@ -182,10 +182,15 @@ function interp(stops, v) {
 }
 const tempColor = (v) => interp(TSTOPS, v);
 const DSTOPS = [[-16, 30, 20, 140, 235], [-10, 40, 80, 220, 225], [-5, 90, 160, 245, 205], [-2, 170, 210, 250, 150], [0, 235, 235, 235, 40], [2, 250, 210, 170, 150], [5, 245, 150, 90, 205], [10, 220, 60, 40, 225], [16, 150, 10, 30, 235]];
-// Beaufort-banded wind speed colours (m/s)
-const BF = [0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 99];
-const WCOL = [[235, 245, 250, 150], [215, 235, 248, 175], [180, 218, 245, 195], [130, 195, 240, 210], [80, 165, 230, 220], [60, 190, 150, 225], [170, 215, 60, 230], [250, 200, 40, 235], [245, 120, 30, 240], [220, 40, 40, 245], [160, 0, 110, 250], [100, 0, 150, 255]];
-function windColor(v) { let i = 0; while (i < BF.length - 1 && v >= BF[i]) i++; return WCOL[i]; }
+// continuous wind-speed colour scale (m/s): many distinct hues, fine steps in light winds
+const WST = [[0, 228, 236, 252, 200], [1, 190, 208, 250, 210], [2, 140, 175, 245, 215], [3, 95, 140, 235, 220], [4, 60, 110, 215, 225], [5, 40, 155, 210, 225],
+  [6, 35, 185, 170, 225], [7, 55, 195, 110, 228], [8, 120, 210, 60, 230], [9, 185, 220, 50, 232], [10, 235, 225, 50, 235], [12, 250, 190, 40, 238], [14, 245, 140, 35, 240],
+  [17, 230, 85, 40, 242], [20, 205, 35, 60, 245], [24, 165, 20, 120, 248], [28, 115, 20, 165, 250], [32, 70, 10, 125, 255]];
+function windColor(v) {
+  if (v <= 0) return WST[0].slice(1);
+  for (let i = 1; i < WST.length; i++) if (v < WST[i][0]) { const p = WST[i - 1], q = WST[i], f = (v - p[0]) / (q[0] - p[0]); return [1, 2, 3, 4].map(k => Math.round(p[k] + (q[k] - p[k]) * f)); }
+  return WST[WST.length - 1].slice(1);
+}
 function dColor(v) { if (v <= DSTOPS[0][0]) return DSTOPS[0].slice(1); for (let i = 1; i < DSTOPS.length; i++) if (v < DSTOPS[i][0]) { const a = DSTOPS[i - 1], b = DSTOPS[i], f = (v - a[0]) / (b[0] - a[0]); return [0, 1, 2, 3].map(k => Math.round(a[k + 1] + (b[k + 1] - a[k + 1]) * f)); } return DSTOPS[DSTOPS.length - 1].slice(1); }
 
 let mode = 'temp';
@@ -464,9 +469,9 @@ function drawLegend() {
     for (let x = 0; x < w; x++) { const v = -32 + 76 * x / w, c = tempColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c})`; g.fillRect(x, 0, 1, h); }
     for (const v of [-30, -20, -10, 0, 10, 20, 30, 40]) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v + 32) / 76 * 100) + '%'; ticks.appendChild(s); }
   } else if (mode === 'wind') {
-    $('legend-title').textContent = '10米风速（风力等级）';
-    for (let x = 0; x < w; x++) { const c = windColor(28 * x / w); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
-    for (const [v, lv] of [[1.6, 2], [5.5, 4], [10.8, 6], [17.2, 8], [24.5, 10]]) { const s = document.createElement('span'); s.textContent = `${lv}级`; s.style.left = (v / 28 * 100) + '%'; ticks.appendChild(s); }
+    $('legend-title').textContent = '10米风速（米/秒）';
+    for (let x = 0; x < w; x++) { const c = windColor(25 * x / w); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
+    for (const v of [0, 2, 4, 6, 8, 10, 12, 15, 20, 25]) { const s = document.createElement('span'); s.textContent = v; s.style.left = (Math.max(1.5, Math.min(98, v / 25 * 100))) + '%'; ticks.appendChild(s); }
   } else {
     $('legend-title').textContent = '24小时变温（℃）：蓝色＝降温，红色＝升温';
     for (let x = 0; x < w; x++) { const v = -16 + 32 * x / w, c = dColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
