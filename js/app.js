@@ -4,8 +4,8 @@ const DPR = Math.min(window.devicePixelRatio || 1, 2);
 const KX = Math.cos(35 * Math.PI / 180);
 const LON0 = 70, LON1 = 170, LAT0 = 0, LAT1 = 66;
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-const DAY0 = 273; // 10月1日 = 一年中的第273天(0起)
-const MLAB = ['10月', '11月', '12月', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月'], MLEN = [31, 30, 31, 31, 28, 31, 30, 31, 30, 31, 31, 30];
+const DAY0 = 0; // 模拟年从1月1日开始
+const MLAB = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'], MLEN = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const view = { s: 10, ox: 0, oy: 0 };
 let W = 0, H = 0;
 const X = (lon) => view.ox + (lon - LON0) * KX * view.s;
@@ -71,8 +71,17 @@ async function loadWinter(name) {
   const [meta, bin] = await Promise.all([fetch(`data/w/${name}.json`).then(r => r.json()), fetch(`data/w/${name}.bin`).then(r => r.arrayBuffer())]);
   const raw = new Int8Array((await gunzip(bin)).buffer);
   const NP = meta.nx * meta.ny, L = 3 * NP, nf = meta.nf;
-  const abs = new Int8Array(raw.length), prev = new Int8Array(L);
-  for (let f = 0; f < nf; f++) { const o = f * L; for (let k = 0; k < L; k++) { const v = (prev[k] + raw[o + k]) << 24 >> 24; prev[k] = v; abs[o + k] = v; } }
+  const old = new Int8Array(raw.length), prev = new Int8Array(L);
+  for (let f = 0; f < nf; f++) { const o = f * L; for (let k = 0; k < L; k++) { const v = (prev[k] + raw[o + k]) << 24 >> 24; prev[k] = v; old[o + k] = v; } }
+  // the model season runs Oct 1 -> Sep 30; re-cut it into a calendar year Jan 1 -> Dec 31.
+  // Oct–Dec come from the start of the run; the Sep 30 -> Oct 1 seam is cross-faded over 8 days.
+  const PF = nf - 1, OFF = 92 * meta.per, SEAM = PF - OFF, BL = 8 * meta.per, abs = new Int8Array(raw.length);
+  for (let f = 0; f < nf; f++) {
+    const of = (Math.min(f, PF - 1) + OFF) % PF, o = f * L, src = of * L;
+    if (f >= SEAM && f < SEAM + BL) { const a0 = (f - SEAM) / BL, a = a0 * a0 * (3 - 2 * a0), e = (PF - 1) * L; for (let k = 0; k < L; k++) abs[o + k] = Math.round(old[e + k] * (1 - a) + old[src + k] * a); }
+    else abs.set(old.subarray(src, src + L), o);
+  }
+  meta.fronts = Array.from({ length: nf }, (_, f) => meta.fronts[(Math.min(f, PF - 1) + OFF) % PF] || []);
   // cold-front display windows: phase 1 (advancing) and first day after it stops
   const fr = meta.fronts; const show = fr.map(() => []);
   for (let f = 0; f < nf; f++) for (const g of fr[f]) {
@@ -353,21 +362,28 @@ function tyCat(v) {
   return v >= 51 ? ['超强台风', '#d81bd8'] : v >= 41.5 ? ['强台风', '#e8204a'] : v >= 32.7 ? ['台风', '#ff7a1a'] : v >= 24.5 ? ['强热带风暴', '#f5c400'] : v >= 17.2 ? ['热带风暴', '#2fb5ff'] : ['热带低压', '#7fd36b'];
 }
 const pastCv = document.createElement('canvas'); let pastKey = '';
+// 588 contour of the analytic subtropical-high field (same shape the typhoon generator steers with)
+function ring588(prm) {
+  const [lonW, phi, wid, dTr] = prm;
+  const sOf = (lon) => Math.pow(Math.max(0, Math.min(1, (lon - lonW) / 7)), 0.45) * Math.pow(Math.max(0, Math.min(1, (192 - lon) / 14)), 0.5);
+  const ridge = (lon) => phi + 0.06 * (lon - 130) - dTr * Math.exp(-Math.pow((lon - 118) / 10, 2));
+  const N = [], S = [];
+  for (let lon = lonW; lon <= 192; lon += 0.5) { const q = Math.sqrt(sOf(lon)), r = ridge(lon); N.push([lon, r + wid * q]); S.push([lon, Math.max(0.5, r - 0.85 * wid * q)]); }
+  return [...S, ...N.reverse()];
+}
 function drawHigh(c, boxes) {
-  if (!$('ly-high').checked || !W_.high) return;
-  const H_ = W_.high, d = Math.max(0, Math.min(H_.days.length - 1, tf / W_.per)), d0 = Math.floor(d), d1 = Math.min(H_.days.length - 1, d0 + 1), w = d - d0;
-  const A = H_.days[d0], B = H_.days[d1], lonW = A[0] * (1 - w) + B[0] * w;
-  const pts = []; H_.lons.forEach((lon, i) => { if (lon >= lonW - 2) pts.push([Math.min(lon, 170), A[i + 1] * (1 - w) + B[i + 1] * w]); });
-  if (pts.length < 2) return;
-  c.setLineDash([7, 5]); c.lineWidth = 2; c.strokeStyle = 'rgba(150,40,190,0.85)'; c.beginPath();
-  // smooth: Catmull-Rom through the edge points
-  const P2 = pts.map(p => [X(p[0]), Y(p[1])]); c.moveTo(P2[0][0], P2[0][1]);
-  for (let i = 0; i < P2.length - 1; i++) { const p0 = P2[Math.max(0, i - 1)], p1 = P2[i], p2 = P2[i + 1], p3 = P2[Math.min(P2.length - 1, i + 2)];
-    c.bezierCurveTo(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6, p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]); }
-  c.stroke(); c.setLineDash([]);
-  const x = P2[0][0], y = P2[0][1]; c.font = '600 12px -apple-system,PingFang SC,sans-serif';
-  const t = '副高', tw = c.measureText(t).width + 10;
-  if (y > 80 && y < H - 100 && x > 4 && x < W - 40) { c.fillStyle = 'rgba(120,30,160,0.85)'; roundRect(c, x - tw - 4, y - 9, tw, 18, 9); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, x - tw + 1, y + 0.5); boxes.push([x - tw - 4, y - 9, tw, 18]); }
+  if (!$('ly-high').checked || !W_.high || W_.high.v !== 2) return;
+  const D_ = W_.high.days, d = Math.max(0, Math.min(D_.length - 1, tf / W_.per - 0.5)), d0 = Math.floor(d), d1 = Math.min(D_.length - 1, d0 + 1), w = d - d0;
+  const prm = D_[d0].map((v, i) => v * (1 - w) + D_[d1][i] * w);
+  const R = ring588(prm);
+  c.beginPath(); R.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1]))); c.closePath();
+  c.fillStyle = 'rgba(160,60,210,0.10)'; c.fill();
+  c.setLineDash([8, 5]); c.lineWidth = 2; c.strokeStyle = 'rgba(140,30,190,0.9)'; c.stroke(); c.setLineDash([]);
+  // label at the west-extension point
+  const x = X(prm[0]), y = Y(prm[1] + 0.06 * (prm[0] - 130)); c.font = '600 12px -apple-system,PingFang SC,sans-serif';
+  const t = '副高 588', tw = c.measureText(t).width + 12;
+  let lx = x - tw - 6; if (lx < 6) lx = x + 8;
+  if (y > 84 && y < H - 100 && lx > 4 && lx + tw < W - 4) { c.fillStyle = 'rgba(120,30,160,0.88)'; roundRect(c, lx, y - 9, tw, 18, 9); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, lx + 6, y + 0.5); boxes.push([lx, y - 9, tw, 18]); }
 }
 function drawTyphoons(c) {
   const boxes = [];
@@ -611,6 +627,7 @@ async function switchWinter(startFrame = 0) {
   if (switching) return; switching = true;
   try {
     prefetchNext(); const w = await nextW; nextW = null;
+    if (w && W_ && !w.blended) { const L = w.L, e = (W_.nf - 1) * L, BL = 8 * w.per; for (let f = 0; f < BL; f++) { const a0 = f / BL, a = a0 * a0 * (3 - 2 * a0), o = f * L; for (let k = 0; k < L; k++) w.abs[o + k] = Math.round(W_.abs[e + k] * (1 - a) + w.abs[o + k] * a); } w.blended = true; }
     if (w) { W_ = w; winterNo++; tf = Math.min(startFrame, w.nf - 2); curFrames = ''; parts = []; slider.max = w.nf - 1; buildTicks(); }
     prefetchNext();
   } finally { switching = false; }
@@ -665,7 +682,7 @@ async function boot() {
   winterList = (await idx).winters;
   if (!gl) throw new Error('此浏览器不支持 WebGL，无法绘制温度图');
   glInit(); drawLegend();
-  // start on today's date if it is in the cold season, otherwise on Oct 1
+  // start on today's date
   const now = new Date(Date.now() + (8 * 60 + new Date().getTimezoneOffset()) * 60000);
   let doy = 0; for (let i = 0; i < now.getMonth(); i++) doy += MONTH_DAYS[i]; doy += now.getDate() - 1;
   const off = (doy - DAY0 + 365) % 365;
