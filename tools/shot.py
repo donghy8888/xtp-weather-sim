@@ -16,7 +16,7 @@ async def main():
         if js:
             r=await pg.evaluate(js); print('eval:',str(r)[:800]); await pg.wait_for_timeout(2500)
         await pg.screenshot(path=out)
-        st=await pg.evaluate("()=>{const s=window.WeatherSim&&WeatherSim.getState(); return s?{date:s.date,wpsh:s.subtropicalHigh.ridgeLat,perf:document.getElementById('perf').textContent}:null}")
+        st=await pg.evaluate("()=>{const s=window.WeatherSim&&WeatherSim.getState(); return s?{date:s.date,typhoons:s.typhoons,status:s.status}:null}")
         print('state',st)
         print('\n'.join(logs[-20:]))
         await b.close()
