@@ -80,9 +80,13 @@ async function loadWinter(name) {
     if (g[0] === 2) { for (let b = 1; b <= 4 && f - b >= 0; b++) if (fr[f - b].some(h => h[0] === 1 && Math.abs(h[2] - g[2]) < 0.5)) { vis = true; break; } }
     show[f].push(vis);
   }
-  return { ...meta, NP, L, abs, show, name };
+  let storms = [];
+  try { storms = await fetch(`data/w/${name}.ty.json`).then(r => r.ok ? r.json() : []); } catch (e) { storms = []; }
+  for (const st of storms) { st.h0 = st.track[0][0]; st.h1 = st.track[st.track.length - 1][0]; st.peak = Math.max(...st.track.map(p => p[3])); }
+  return { ...meta, NP, L, abs, show, name, storms };
 }
 function pickWinter() {
+  const want = new URLSearchParams(location.search).get('year'); if (want && !usedW.length && winterList.includes(want)) { usedW.push(want); return want; }
   let pool = winterList.filter(n => !usedW.includes(n)); if (!pool.length) { usedW = []; pool = winterList.slice(); }
   const n = pool[Math.floor(Math.random() * pool.length)]; usedW.push(n); return n;
 }
@@ -111,6 +115,9 @@ uniform vec4 uV; uniform vec2 uSz; uniform float uDpr;
 uniform sampler2D tC0, tC1, tA0, tA1, tB0, tB1, tPal;
 uniform float uCw, uFw, uMode;
 uniform vec4 uCg; uniform vec4 uAg;
+uniform vec4 uTy[8]; uniform float uTyN; // typhoons: lon, lat, vmax (m/s), radius of max wind (km)
+// typhoon wind profile: calm eye inside rm, decaying outside, fading out by ~900 km
+float tyV(float r, float vm, float rm) { return r < rm ? vm * pow(r / rm, 1.3) : vm * pow(rm / r, 0.55) * exp(-pow(r / 950.0, 2.0)); }
 // manual bilinear sampling (independent of the GPU's filtering support for 8-bit textures)
 float bl(sampler2D t, vec2 g, vec2 sz) {
   g = clamp(g, vec2(0.0), sz - 1.001); vec2 i = floor(g), f = g - i;
@@ -127,10 +134,17 @@ void main(){
   vec2 ag = vec2((lon - uAg.x) / uAg.z, (lat - uAg.y) / uAg.z), AS = vec2(67.0, 45.0);
   float a0 = (bl(tA0, ag, AS) * 255.0 - 128.0) * 0.25, a1 = (bl(tA1, ag, AS) * 255.0 - 128.0) * 0.25;
   float an = mix(a0, a1, uFw);
-  float v;
+  float v, tyS = 0.0, tyC = 0.0;
+  for (int i = 0; i < 8; i++) {
+    if (float(i) >= uTyN) break;
+    vec4 t = uTy[i]; float dx = (lon - t.x) * 111.2 * cos(radians(t.y)), dy = (lat - t.y) * 111.2, r = sqrt(dx * dx + dy * dy);
+    if (r > 1500.0) continue;
+    float vt = tyV(r, t.z, t.w); tyS = max(tyS, vt);
+    tyC += clamp(t.z / 45.0, 0.0, 1.0) * 2.5 * exp(-pow(r / 280.0, 2.0)); // rain-cooled core
+  }
   if (uMode < 0.5) {
     float c0 = bl(tC0, cg, CS) * 127.5 - 50.0, c1 = bl(tC1, cg, CS) * 127.5 - 50.0;
-    v = mix(c0, c1, uCw) + an;
+    v = mix(c0, c1, uCw) + an - tyC;
     gl_FragColor = texture2D(tPal, vec2((v + 44.0) / 88.0, 0.1667));
   } else if (uMode < 1.5) {
     float b0 = (bl(tB0, ag, AS) * 255.0 - 128.0) * 0.25, b1 = (bl(tB1, ag, AS) * 255.0 - 128.0) * 0.25;
@@ -138,7 +152,8 @@ void main(){
     gl_FragColor = texture2D(tPal, vec2((v + 20.0) / 40.0, 0.5));
   } else {
     float s0 = bl(tA0, ag, AS) * 255.0 / 8.0, s1 = bl(tA1, ag, AS) * 255.0 / 8.0;
-    gl_FragColor = texture2D(tPal, vec2(mix(s0, s1, uFw) / 32.0, 0.8333));
+    float se = mix(s0, s1, uFw); se = sqrt(se * se + tyS * tyS);
+    gl_FragColor = texture2D(tPal, vec2(se / 64.0, 0.8333));
   }
 }`;
 function glInit() {
@@ -148,7 +163,7 @@ function glInit() {
   gl.useProgram(prog);
   const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  for (const n of ['uV', 'uSz', 'uDpr', 'tC0', 'tC1', 'tA0', 'tA1', 'tB0', 'tB1', 'tPal', 'uCw', 'uFw', 'uMode', 'uCg', 'uAg']) U[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uV', 'uSz', 'uDpr', 'tC0', 'tC1', 'tA0', 'tA1', 'tB0', 'tB1', 'tPal', 'uCw', 'uFw', 'uMode', 'uCg', 'uAg', 'uTy', 'uTyN']) U[n] = gl.getUniformLocation(prog, n);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
   ['tC0', 'tC1', 'tA0', 'tA1', 'tB0', 'tB1', 'tPal'].forEach((n, i) => {
     const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t);
@@ -164,7 +179,7 @@ function glInit() {
     pal.set([c[0], c[1], c[2], 225], i * 4);
     const d = -20 + 40 * (i + 0.5) / PW, db = Math.floor(d / 2) * 2 + 1; const e = dColor(db);
     pal.set(e, (PW + i) * 4);
-    pal.set(windColor(32 * (i + 0.5) / PW), (2 * PW + i) * 4);
+    pal.set(windColor(64 * (i + 0.5) / PW), (2 * PW + i) * 4);
   }
   upload('tPal', PW, 3, pal, gl.RGBA);
   gl.uniform4f(U.uCg, tclim.lon0, tclim.lat0, tclim.res, tclim.nx);
@@ -185,7 +200,7 @@ const DSTOPS = [[-16, 30, 20, 140, 235], [-10, 40, 80, 220, 225], [-5, 90, 160, 
 // continuous wind-speed colour scale (m/s): many distinct hues, fine steps in light winds
 const WST = [[0, 228, 236, 252, 200], [1, 190, 208, 250, 210], [2, 140, 175, 245, 215], [3, 95, 140, 235, 220], [4, 60, 110, 215, 225], [5, 40, 155, 210, 225],
   [6, 35, 185, 170, 225], [7, 55, 195, 110, 228], [8, 120, 210, 60, 230], [9, 185, 220, 50, 232], [10, 235, 225, 50, 235], [12, 250, 190, 40, 238], [14, 245, 140, 35, 240],
-  [17, 230, 85, 40, 242], [20, 205, 35, 60, 245], [24, 165, 20, 120, 248], [28, 115, 20, 165, 250], [32, 70, 10, 125, 255]];
+  [17, 230, 85, 40, 242], [20, 205, 35, 60, 245], [24, 165, 20, 120, 248], [28, 115, 20, 165, 250], [33, 75, 10, 130, 255], [42, 150, 40, 200, 255], [51, 235, 120, 235, 255], [64, 255, 225, 255, 255]];
 function windColor(v) {
   if (v <= 0) return WST[0].slice(1);
   for (let i = 1; i < WST.length; i++) if (v < WST[i][0]) { const p = WST[i - 1], q = WST[i], f = (v - p[0]) / (q[0] - p[0]); return [1, 2, 3, 4].map(k => Math.round(p[k] + (q[k] - p[k]) * f)); }
@@ -215,6 +230,9 @@ function drawGL() {
   gl.uniform4f(U.uV, view.ox, view.oy, view.s, KX); gl.uniform2f(U.uSz, cGL.width, cGL.height); gl.uniform1f(U.uDpr, 1);
   gl.uniform1f(U.uCw, cw); gl.uniform1f(U.uFw, fw); gl.uniform1f(U.uMode, mode === 'temp' ? 0 : mode === 'd24' ? 1 : 2);
   gl.uniform4f(U.uAg, W_.lon0, W_.lat0, W_.res, 0);
+  const ty = (showTy() ? activeStorms(tf) : []).slice(0, 8), ta = new Float32Array(32);
+  ty.forEach((t, i) => ta.set([t.lon, t.lat, t.v, t.rm], i * 4));
+  gl.uniform4fv(U.uTy, ta); gl.uniform1f(U.uTyN, ty.length);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -277,6 +295,7 @@ function newPart() { return { lon: LONf(Math.random() * W), lat: LATf(76 + Math.
 function drawDyn(dtReal) {
   const c = gDyn; c.setTransform(DPR, 0, 0, DPR, 0, 0);
   const nf = W_.nf, f0 = Math.min(nf - 2, Math.floor(tf)), fw = tf - f0;
+  curTy = showTy() ? activeStorms(tf) : [];
   if ($('ly-wind').checked) {
     c.globalCompositeOperation = 'destination-in'; c.fillStyle = 'rgba(0,0,0,0.9)'; c.fillRect(0, 0, W, H); c.globalCompositeOperation = 'source-over';
     if (!parts.length) { const n = Math.round(Math.min(1800, W * H / 600)); for (let i = 0; i < n; i++) parts.push(newPart()); }
@@ -285,7 +304,8 @@ function drawDyn(dtReal) {
     for (const p of parts) {
       const x0 = X(p.lon), y0 = Y(p.lat);
       if (p.age > 70 || x0 < 0 || y0 < 0 || x0 > W || y0 > H) { Object.assign(p, newPart()); p.age = 0; continue; }
-      const u = sampleField(1, p.lon, p.lat, f0, fw), v = sampleField(2, p.lon, p.lat, f0, fw);
+      let u = sampleField(1, p.lon, p.lat, f0, fw), v = sampleField(2, p.lon, p.lat, f0, fw);
+      for (const t of curTy) { const w = tyWind(t, p.lon, p.lat); u += w[0]; v += w[1]; }
       p.lon += u * k / (view.s * Math.max(0.3, Math.cos(p.lat * Math.PI / 180))); p.lat += v * k / view.s;
       c.moveTo(x0, y0); c.lineTo(X(p.lon), Y(p.lat)); p.age++;
     }
@@ -307,9 +327,72 @@ function currentFronts(f0, fw) {
   });
   return out;
 }
+// ---------------- typhoons (auto-generated each year by tools/gen_typhoons.mjs) ----------------
+let curTy = [];
+const showTy = () => $('ly-ty').checked;
+function tyLerp(st, h) {
+  const T = st.track; let i = Math.min(T.length - 2, Math.max(0, Math.floor((h - T[0][0]) / 3)));
+  while (i > 0 && T[i][0] > h) i--; while (i < T.length - 2 && T[i + 1][0] <= h) i++;
+  const a = T[i], b = T[i + 1], f = Math.max(0, Math.min(1, (h - a[0]) / (b[0] - a[0])));
+  return { lon: a[1] + (b[1] - a[1]) * f, lat: a[2] + (b[2] - a[2]) * f, v: a[3] + (b[3] - a[3]) * f, rm: a[4] + (b[4] - a[4]) * f, et: a[5] + (b[5] - a[5]) * f, i };
+}
+function activeStorms(f) {
+  if (!W_ || !W_.storms) return [];
+  const h = f * 24 / W_.per, out = [];
+  for (const st of W_.storms) if (h >= st.h0 && h <= st.h1) { const p = tyLerp(st, h); p.st = st; p.h = h; out.push(p); }
+  return out.sort((a, b) => b.v - a.v);
+}
+function tyProfile(r, vm, rm) { return r < rm ? vm * Math.pow(r / rm, 1.3) : vm * Math.pow(rm / r, 0.55) * Math.exp(-Math.pow(r / 950, 2)); }
+function tyWind(t, lon, lat) { // counter-clockwise circulation with ~20° inflow
+  const dx = (lon - t.lon) * 111.2 * Math.cos(t.lat * Math.PI / 180), dy = (lat - t.lat) * 111.2, r = Math.hypot(dx, dy);
+  if (r > 1400 || r < 1) return [0, 0];
+  const V = tyProfile(r, t.v, t.rm) * 0.85, ex = dx / r, ey = dy / r;
+  return [V * (-ey - 0.36 * ex), V * (ex - 0.36 * ey)];
+}
+function tyCat(v) {
+  return v >= 51 ? ['超强台风', '#d81bd8'] : v >= 41.5 ? ['强台风', '#e8204a'] : v >= 32.7 ? ['台风', '#ff7a1a'] : v >= 24.5 ? ['强热带风暴', '#f5c400'] : v >= 17.2 ? ['热带风暴', '#2fb5ff'] : ['热带低压', '#7fd36b'];
+}
+function drawTyphoons(c) {
+  if (!showTy()) return;
+  const boxes = [];
+  const hit = (x, y, w, h) => { if (y < 76 || y + h > H - 86 || x < 4 || x + w > W - 4) return true; for (const b of boxes) if (x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]) return true; return false; };
+  // tracks first
+  for (const t of curTy) {
+    const T = t.st.track; c.lineWidth = 2.2; c.lineCap = 'round';
+    for (let k = 1; k <= t.i + 1 && k < T.length; k++) {
+      const a = T[k - 1], b = k <= t.i ? T[k] : [0, t.lon, t.lat, t.v];
+      c.strokeStyle = tyCat(a[3])[1]; c.beginPath(); c.moveTo(X(a[1]), Y(a[2])); c.lineTo(X(b[1]), Y(b[2])); c.stroke();
+    }
+    for (let k = 0; k <= t.i; k += 8) { c.beginPath(); c.arc(X(T[k][1]), Y(T[k][2]), 2.2, 0, 7); c.fillStyle = '#fff'; c.fill(); } // one dot per day
+  }
+  // symbols + labels
+  for (const t of curTy) {
+    const x = X(t.lon), y = Y(t.lat); if (x < -30 || y < -30 || x > W + 30 || y > H + 30) continue;
+    const [cn, col] = tyCat(t.v), R = t.v >= 32.7 ? 11 : 9, ang = -t.h * 0.9;
+    c.save(); c.translate(x, y); c.rotate(ang);
+    c.lineWidth = 3.4; c.strokeStyle = 'rgba(0,0,0,0.55)';
+    const glyph = () => { c.beginPath(); c.arc(0, 0, R * 0.55, 0, 7); c.moveTo(R * 0.55, 0); c.arc(R * 1.15, 0, R * 0.6, Math.PI, Math.PI * 1.75, false); c.moveTo(-R * 0.55, 0); c.arc(-R * 1.15, 0, R * 0.6, 0, Math.PI * 0.75, false); };
+    if (t.v >= 17.2) { glyph(); c.stroke(); c.lineWidth = 2.4; c.strokeStyle = col; glyph(); c.stroke(); }
+    c.beginPath(); c.arc(0, 0, R * 0.55, 0, 7); c.fillStyle = col; c.fill(); c.lineWidth = 1.4; c.strokeStyle = '#fff'; c.stroke();
+    c.restore();
+    if (t.v < 17.2 && view.s < 14) continue;
+    const txt = `${t.st.name} · ${t.et > 0.6 ? '变性温带气旋' : cn} ${Math.round(t.v)}米/秒`;
+    c.font = '600 13px -apple-system,PingFang SC,sans-serif'; const w = c.measureText(txt).width + 14, h = 22;
+    let pos = null;
+    const cand = [[16, -h / 2], [-16 - w, -h / 2], [-w / 2, 16], [-w / 2, -16 - h], [16, 8], [16, -h - 8]];
+    const cityHit = (x, y) => placedBoxes.some(b => x < b[0] + b[2] && x + w > b[0] && y < b[1] + b[3] && y + h > b[1]);
+    for (const [ox, oy] of cand) if (!hit(x + ox, y + oy, w, h) && !cityHit(x + ox, y + oy)) { pos = [x + ox, y + oy]; break; }
+    if (!pos) for (const [ox, oy] of cand) if (!hit(x + ox, y + oy, w, h)) { pos = [x + ox, y + oy]; break; }
+    if (!pos) continue; boxes.push([pos[0], pos[1], w, h]);
+    c.fillStyle = 'rgba(12,18,30,0.78)'; roundRect(c, pos[0], pos[1], w, h, 11); c.fill();
+    c.fillStyle = col; c.fillRect(pos[0] + 7, pos[1] + 6, 3, h - 12);
+    c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(txt, pos[0] + 14, pos[1] + h / 2 + 0.5);
+  }
+}
 function drawFronts(f0, fw) {
   const c = gFr; if (cFr.width !== cDyn.width) { cFr.width = cDyn.width; cFr.height = cDyn.height; }
   c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
+  drawTyphoons(c);
   return; // cold-front drawing removed at the user's request
   for (const g of currentFronts(f0, fw)) {
     if (g.phase === 0) { // cold air building up over Mongolia / Siberia
@@ -367,7 +450,11 @@ function climAt(lon, lat, doy) {
   const g = (m) => { const o = m * n; return ((d[o + k] * (1 - a) + d[o + k + 1] * a) * (1 - b) + (d[o + k + T.nx] * (1 - a) + d[o + k + T.nx + 1] * a) * b) / 2 - 50; };
   return g(m0) * (1 - w) + g(m1) * w;
 }
-function tempAt(lon, lat, f) { const f0 = Math.min(W_.nf - 2, Math.floor(f)); return climAt(lon, lat, frameDate(f).doy) + sampleField(0, lon, lat, f0, f - f0); }
+function tempAt(lon, lat, f) {
+  const f0 = Math.min(W_.nf - 2, Math.floor(f)); let T = climAt(lon, lat, frameDate(f).doy) + sampleField(0, lon, lat, f0, f - f0);
+  if (showTy()) for (const t of activeStorms(f)) { const r = Math.hypot((lon - t.lon) * 111.2 * Math.cos(t.lat * Math.PI / 180), (lat - t.lat) * 111.2); T -= Math.min(1, Math.max(0, t.v / 45)) * 2.5 * Math.exp(-Math.pow(r / 280, 2)); }
+  return T;
+}
 function showCity() {
   if (!selected) return;
   $('city').classList.remove('hidden');
@@ -470,8 +557,9 @@ function drawLegend() {
     for (const v of [-30, -20, -10, 0, 10, 20, 30, 40]) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v + 32) / 76 * 100) + '%'; ticks.appendChild(s); }
   } else if (mode === 'wind') {
     $('legend-title').textContent = '10米风速（米/秒）';
-    for (let x = 0; x < w; x++) { const c = windColor(25 * x / w); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
-    for (const v of [0, 2, 4, 6, 8, 10, 12, 15, 20, 25]) { const s = document.createElement('span'); s.textContent = v; s.style.left = (Math.max(1.5, Math.min(98, v / 25 * 100))) + '%'; ticks.appendChild(s); }
+    const pos = (v) => v <= 20 ? 0.72 * v / 20 : 0.72 + 0.28 * (v - 20) / 40, inv = (q) => q <= 0.72 ? 20 * q / 0.72 : 20 + 40 * (q - 0.72) / 0.28;
+    for (let x = 0; x < w; x++) { const c = windColor(inv(x / w)); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
+    for (const v of [0, 2, 4, 6, 8, 10, 12, 15, 20, 30, 40, 50]) { const s = document.createElement('span'); s.textContent = v; s.style.left = (Math.max(1.5, Math.min(98, pos(v) * 100))) + '%'; ticks.appendChild(s); }
   } else {
     $('legend-title').textContent = '24小时变温（℃）：蓝色＝降温，红色＝升温';
     for (let x = 0; x < w; x++) { const v = -16 + 32 * x / w, c = dColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
@@ -508,7 +596,9 @@ function updateUi() {
   const f0 = Math.min(W_.nf - 2, Math.floor(tf)), d = frameDate(tf);
   $('date-str').textContent = `${d.mon}月${d.day}日`;
   $('winter-str').textContent = `第 ${winterNo} 个模拟年 · 每天都由模式算出`;
-  const st = (d.mon >= 5 && d.mon <= 9) ? '' : statusText(f0, tf - f0); if ($('status').innerHTML !== st) $('status').innerHTML = st;
+  const ty = showTy() ? activeStorms(tf).filter(t => t.v >= 17.2) : [];
+  const st = ty.length ? `🌀 ${ty.slice(0, 3).map(t => `<b>${t.st.name}</b> ${tyCat(t.v)[0]}`).join('　')}${ty.length > 3 ? ` 等${ty.length}个` : ''}`
+    : (d.mon >= 5 && d.mon <= 9) ? '' : statusText(f0, tf - f0); if ($('status').innerHTML !== st) $('status').innerHTML = st;
   if (!scrubbing) slider.value = Math.round(tf);
   if (selected) showCity();
   api._emit();
@@ -517,7 +607,7 @@ function updateUi() {
 // ---------------- small public API (state of the simulated winter) ----------------
 const api = {
   _subs: [], _emit() { if (!this._subs.length) return; const s = this.getState(); for (const f of this._subs) try { f(s); } catch (e) { } },
-  getState() { if (!W_) return null; const f0 = Math.min(W_.nf - 2, Math.floor(tf)); return { date: frameDate(tf), winter: winterNo, frame: tf, coldFronts: currentFronts(f0, tf - f0), status: $('status').textContent }; },
+  getState() { if (!W_) return null; const f0 = Math.min(W_.nf - 2, Math.floor(tf)); return { date: frameDate(tf), winter: winterNo, frame: tf, coldFronts: currentFronts(f0, tf - f0), status: $('status').textContent, typhoons: activeStorms(tf).map(t => ({ name: t.st.name, lon: +t.lon.toFixed(2), lat: +t.lat.toFixed(2), vmax: +t.v.toFixed(1), category: tyCat(t.v)[0] })) }; },
   temperature(lon, lat) { return W_ ? tempAt(lon, lat, tf) : null; },
   onUpdate(cb) { this._subs.push(cb); return () => { this._subs = this._subs.filter(f => f !== cb); }; },
   play() { setPlay(true); }, pause() { setPlay(false); }, setSpeed(daysPerSecond) { speed = daysPerSecond; },
