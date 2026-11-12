@@ -294,7 +294,7 @@ function currentFronts(f0, fw) {
 function drawFronts(f0, fw) {
   const c = gFr; if (cFr.width !== cDyn.width) { cFr.width = cDyn.width; cFr.height = cDyn.height; }
   c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, W, H);
-  if (!$('ly-front').checked) return;
+  return; // cold-front drawing removed at the user's request
   for (const g of currentFronts(f0, fw)) {
     if (g.phase === 0) { // cold air building up over Mongolia / Siberia
       const x = X(g.lonC - 4), y = Y(g.lat - 1); if (y < 80 || y > H - 90) continue;
@@ -335,7 +335,7 @@ function statusText(f0, fw) {
   const fr = currentFronts(f0, fw);
   const adv = fr.filter(g => g.phase === 1).sort((a, b) => a.lat - b.lat)[0];
   const strength = (g) => g.cls === 2 ? '强冷空气（寒潮）' : g.cls === 1 ? '较强冷空气' : '一股冷空气';
-  if (adv) { const la = adv.lat + adv.tilt * (113 - adv.lonC); return `${strength(adv)}正在南下，冷锋已到<b>${region(la)}</b>，锋后刮北风、气温骤降`; }
+  if (adv) { const la = adv.lat + adv.tilt * (113 - adv.lonC); return `${strength(adv)}正在南下，已到<b>${region(la)}</b>，所到之处刮北风、气温骤降`; }
   const stop = fr.find(g => g.phase === 2);
   if (stop) { const la = stop.lat + stop.tilt * (113 - stop.lonC); return `冷空气已南下到<b>${region(la)}</b>，大范围气温偏低，之后将慢慢回升`; }
   if (fr.some(g => g.phase === 0)) return '蒙古—西伯利亚一带<b>冷空气正在堆积</b>，即将南下';
@@ -423,10 +423,9 @@ function onTap(x, y) {
 }
 
 // ---------------- controls ----------------
-function closePops() { $('layers').classList.add('hidden'); $('help').classList.add('hidden'); $('btn-layers').classList.remove('on'); }
+function closePops() { $('layers').classList.add('hidden'); $('btn-layers').classList.remove('on'); }
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => { $(b.dataset.close).classList.add('hidden'); if (b.dataset.close === 'city') selected = null; });
-$('btn-layers').onclick = () => { const h = $('layers').classList.toggle('hidden'); $('help').classList.add('hidden'); $('btn-layers').classList.toggle('on', !h); };
-$('btn-help').onclick = () => { $('help').classList.toggle('hidden'); $('layers').classList.add('hidden'); };
+$('btn-layers').onclick = () => { const h = $('layers').classList.toggle('hidden'); $('btn-layers').classList.toggle('on', !h); };
 const setPlay = (p) => { playing = p; $('btn-play').textContent = p ? '⏸' : '▶'; };
 $('btn-play').onclick = () => setPlay(!playing);
 document.querySelectorAll('#speeds button').forEach(b => b.onclick = () => { document.querySelectorAll('#speeds button').forEach(x => x.classList.remove('on')); b.classList.add('on'); speed = +b.dataset.sp; });

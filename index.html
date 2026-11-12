@@ -29,7 +29,6 @@
   </div>
   <div class="top-btns">
     <button id="btn-layers" class="round" aria-label="显示设置">☰</button>
-    <button id="btn-help" class="round" aria-label="说明">?</button>
   </div>
 </header>
 
@@ -41,20 +40,8 @@
     <button data-mode="temp" class="on">气温</button>
     <button data-mode="d24">24小时变温</button>
   </div>
-  <label class="tg"><input type="checkbox" id="ly-front" checked><span>冷锋（蓝色带三角的线）</span></label>
   <label class="tg"><input type="checkbox" id="ly-wind" checked><span>风的流动（白色细线）</span></label>
   <label class="tg"><input type="checkbox" id="ly-city" checked><span>城市名</span></label>
-</div>
-
-<div id="help" class="panel pop hidden">
-  <button class="x" data-close="help">×</button>
-  <div class="ph">这是什么？</div>
-  <p>这张图是<b>模拟出来的冬季地面气温</b>：蓝紫色表示冷，黄红色表示暖。按 ▶ 播放，就能看到冷空气（蓝色区域）从蒙古、西伯利亚一路向南推进到华中、华南。</p>
-  <p><b>冷锋</b>：冷空气前沿。蓝线上的三角指向冷空气前进的方向，冷锋经过的地方会刮北风、气温骤降。</p>
-  <p><b>寒潮</b>：冷空气特别强、降温特别猛的过程。按国家标准，一地日最低气温 48 小时内下降 10℃ 以上（或 24 小时 8℃、72 小时 12℃）且最低气温降到 4℃ 以下，就算寒潮。</p>
-  <p><b>24小时变温</b>：和一天前相比升温（红）还是降温（蓝），最容易看清冷空气走到了哪里。</p>
-  <p>点地图上任意城市或地点，可看它这个冬天的气温曲线。双指可缩放、拖动地图。</p>
-  <p class="muted small">天气由一个多层原始方程大气模式计算（1.5° 网格，NCEP 气候态 + 模式自身发展的天气 + 随机冷空气过程），每个冬天都不一样。为了在 iPad 上流畅快速播放，冬季过程预先用同一个模式算好，播放时随机选取。不是实况。</p>
 </div>
 
 <div id="city" class="panel hidden">
