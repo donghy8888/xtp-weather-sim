@@ -72,3 +72,8 @@ button { font-family: inherit; color: #fff; border: 0; cursor: pointer; }
 @media (orientation: portrait) {
   #status { top: calc(env(safe-area-inset-top) + 84px); }
 }
+
+.big-seg { margin: 0; flex: none; background: rgba(255,255,255,.14); }
+.big-seg button { height: 48px; min-width: 92px; font-size: 17px; font-weight: 600; padding: 0 12px; }
+#layers .seg button { font-size: 15px; }
+@media (max-width: 900px) { .big-seg button { min-width: 78px; font-size: 16px; } #legend { max-width: 300px; } }

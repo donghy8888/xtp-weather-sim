@@ -5,6 +5,7 @@ const KX = Math.cos(35 * Math.PI / 180);
 const LON0 = 70, LON1 = 170, LAT0 = 0, LAT1 = 66;
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const DAY0 = 273; // 10月1日 = 一年中的第273天(0起)
+const MLAB = ['10月', '11月', '12月', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月'], MLEN = [31, 30, 31, 31, 28, 31, 30, 31, 30, 31, 31, 30];
 const view = { s: 10, ox: 0, oy: 0 };
 let W = 0, H = 0;
 const X = (lon) => view.ox + (lon - LON0) * KX * view.s;
@@ -130,11 +131,14 @@ void main(){
   if (uMode < 0.5) {
     float c0 = bl(tC0, cg, CS) * 127.5 - 50.0, c1 = bl(tC1, cg, CS) * 127.5 - 50.0;
     v = mix(c0, c1, uCw) + an;
-    gl_FragColor = texture2D(tPal, vec2((v + 44.0) / 88.0, 0.25));
-  } else {
+    gl_FragColor = texture2D(tPal, vec2((v + 44.0) / 88.0, 0.1667));
+  } else if (uMode < 1.5) {
     float b0 = (bl(tB0, ag, AS) * 255.0 - 128.0) * 0.25, b1 = (bl(tB1, ag, AS) * 255.0 - 128.0) * 0.25;
     v = an - mix(b0, b1, uFw);
-    gl_FragColor = texture2D(tPal, vec2((v + 20.0) / 40.0, 0.75));
+    gl_FragColor = texture2D(tPal, vec2((v + 20.0) / 40.0, 0.5));
+  } else {
+    float s0 = bl(tA0, ag, AS) * 255.0 / 8.0, s1 = bl(tA1, ag, AS) * 255.0 / 8.0;
+    gl_FragColor = texture2D(tPal, vec2(mix(s0, s1, uFw) / 32.0, 0.8333));
   }
 }`;
 function glInit() {
@@ -154,14 +158,15 @@ function glInit() {
     gl.uniform1i(U[n], i); tex[n] = { t, unit: i };
   });
   // palette texture: row 0 = temperature (-44..44, 2℃ bands), row 1 = 24h change (-20..20)
-  const PW = 352, pal = new Uint8Array(PW * 2 * 4);
+  const PW = 352, pal = new Uint8Array(PW * 3 * 4);
   for (let i = 0; i < PW; i++) {
     const v = -44 + 88 * (i + 0.5) / PW, vb = Math.floor(v / 2) * 2 + 1; const c = tempColor(vb);
     pal.set([c[0], c[1], c[2], 225], i * 4);
     const d = -20 + 40 * (i + 0.5) / PW, db = Math.floor(d / 2) * 2 + 1; const e = dColor(db);
     pal.set(e, (PW + i) * 4);
+    pal.set(windColor(32 * (i + 0.5) / PW), (2 * PW + i) * 4);
   }
-  upload('tPal', PW, 2, pal, gl.RGBA);
+  upload('tPal', PW, 3, pal, gl.RGBA);
   gl.uniform4f(U.uCg, tclim.lon0, tclim.lat0, tclim.res, tclim.nx);
 }
 function upload(name, w, h, data, fmt = gl.LUMINANCE) {
@@ -169,7 +174,7 @@ function upload(name, w, h, data, fmt = gl.LUMINANCE) {
   gl.texImage2D(gl.TEXTURE_2D, 0, fmt, w, h, 0, fmt, gl.UNSIGNED_BYTE, data);
 }
 const TSTOPS = [[-40, 70, 0, 110], [-32, 110, 30, 170], [-24, 80, 60, 210], [-16, 40, 100, 235], [-10, 40, 150, 245], [-4, 100, 195, 250], [0, 175, 225, 255],
-  [2, 175, 230, 205], [6, 120, 205, 120], [10, 175, 220, 90], [14, 240, 230, 90], [18, 250, 195, 70], [22, 245, 145, 50], [26, 230, 85, 40], [30, 200, 30, 40], [36, 130, 0, 40]];
+  [2, 175, 230, 205], [6, 120, 205, 120], [10, 175, 220, 90], [14, 240, 230, 90], [18, 250, 195, 70], [22, 245, 145, 50], [26, 230, 85, 40], [30, 200, 30, 40], [36, 150, 0, 40], [40, 105, 0, 70], [44, 80, 0, 100]];
 function interp(stops, v) {
   if (v <= stops[0][0]) return stops[0].slice(1);
   for (let i = 1; i < stops.length; i++) if (v < stops[i][0]) { const a = stops[i - 1], b = stops[i], f = (v - a[0]) / (b[0] - a[0]); return [0, 1, 2].map(k => Math.round(a[k + 1] + (b[k + 1] - a[k + 1]) * f)); }
@@ -177,12 +182,18 @@ function interp(stops, v) {
 }
 const tempColor = (v) => interp(TSTOPS, v);
 const DSTOPS = [[-16, 30, 20, 140, 235], [-10, 40, 80, 220, 225], [-5, 90, 160, 245, 205], [-2, 170, 210, 250, 150], [0, 235, 235, 235, 40], [2, 250, 210, 170, 150], [5, 245, 150, 90, 205], [10, 220, 60, 40, 225], [16, 150, 10, 30, 235]];
+// Beaufort-banded wind speed colours (m/s)
+const BF = [0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 99];
+const WCOL = [[235, 245, 250, 150], [215, 235, 248, 175], [180, 218, 245, 195], [130, 195, 240, 210], [80, 165, 230, 220], [60, 190, 150, 225], [170, 215, 60, 230], [250, 200, 40, 235], [245, 120, 30, 240], [220, 40, 40, 245], [160, 0, 110, 250], [100, 0, 150, 255]];
+function windColor(v) { let i = 0; while (i < BF.length - 1 && v >= BF[i]) i++; return WCOL[i]; }
 function dColor(v) { if (v <= DSTOPS[0][0]) return DSTOPS[0].slice(1); for (let i = 1; i < DSTOPS.length; i++) if (v < DSTOPS[i][0]) { const a = DSTOPS[i - 1], b = DSTOPS[i], f = (v - a[0]) / (b[0] - a[0]); return [0, 1, 2, 3].map(k => Math.round(a[k + 1] + (b[k + 1] - a[k + 1]) * f)); } return DSTOPS[DSTOPS.length - 1].slice(1); }
 
 let mode = 'temp';
 const tmpA = new Uint8Array(67 * 45);
 function frameTex(f, name) {
-  const NP = W_.NP, o = f * W_.L; for (let k = 0; k < NP; k++) tmpA[k] = W_.abs[o + k] + 128;
+  const NP = W_.NP, o = f * W_.L;
+  if (mode === 'wind') { const A = W_.abs; for (let k = 0; k < NP; k++) { const sp = Math.hypot(A[o + NP + k], A[o + 2 * NP + k]) / 2.5; tmpA[k] = Math.min(255, Math.round(sp * 8)); } }
+  else for (let k = 0; k < NP; k++) tmpA[k] = W_.abs[o + k] + 128;
   upload(name, W_.nx, W_.ny, tmpA);
 }
 function drawGL() {
@@ -197,7 +208,7 @@ function drawGL() {
   }
   gl.viewport(0, 0, cGL.width, cGL.height); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
   gl.uniform4f(U.uV, view.ox, view.oy, view.s, KX); gl.uniform2f(U.uSz, cGL.width, cGL.height); gl.uniform1f(U.uDpr, 1);
-  gl.uniform1f(U.uCw, cw); gl.uniform1f(U.uFw, fw); gl.uniform1f(U.uMode, mode === 'temp' ? 0 : 1);
+  gl.uniform1f(U.uCw, cw); gl.uniform1f(U.uFw, fw); gl.uniform1f(U.uMode, mode === 'temp' ? 0 : mode === 'd24' ? 1 : 2);
   gl.uniform4f(U.uAg, W_.lon0, W_.lat0, W_.res, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
@@ -371,7 +382,7 @@ function drawChart() {
   const L = 34, R = 8, T = 6, B = 18, x = (f) => L + f / (nf - 1) * (w - L - R), y = (v) => T + (mx - v) / (mx - mn) * (h - T - B);
   g.font = '11px -apple-system,sans-serif'; g.fillStyle = '#c9d6ea'; g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 1;
   for (let v = mn; v <= mx; v += (mx - mn > 30 ? 10 : 5)) { g.beginPath(); g.moveTo(L, y(v)); g.lineTo(w - R, y(v)); g.stroke(); g.fillText(v + '°', 4, y(v) + 4); }
-  let acc = 0; for (let m = 0; m < 7; m++) { const md = [31, 30, 31, 31, 28, 31, 30][m]; g.fillText(['10月', '11月', '12月', '1月', '2月', '3月', '4月'][m], x(acc * W_.per) + 2, h - 4); g.beginPath(); g.moveTo(x(acc * W_.per), T); g.lineTo(x(acc * W_.per), h - B); g.stroke(); acc += md; }
+  let acc = 0; const step = w < 400 ? 2 : 1; for (let m = 0; m < 12 && acc * W_.per < nf; m++) { const md = MLEN[m]; if (m % step === 0) g.fillText(MLAB[m], x(acc * W_.per) + 2, h - 4); g.beginPath(); g.moveTo(x(acc * W_.per), T); g.lineTo(x(acc * W_.per), h - B); g.stroke(); acc += md; }
   g.setLineDash([4, 4]); g.strokeStyle = 'rgba(160,210,255,0.8)'; g.beginPath(); g.moveTo(L, y(0)); g.lineTo(w - R, y(0)); g.stroke(); g.setLineDash([]);
   g.strokeStyle = '#ff8a6a'; g.lineWidth = 1.8; g.beginPath(); vals.forEach((v, f) => f ? g.lineTo(x(f), y(v)) : g.moveTo(x(f), y(v))); g.stroke();
   if (vals.length) { g.fillStyle = '#fff'; g.beginPath(); g.arc(x(cur), y(vals[vals.length - 1]), 3.5, 0, 7); g.fill(); }
@@ -429,9 +440,11 @@ $('btn-layers').onclick = () => { const h = $('layers').classList.toggle('hidden
 const setPlay = (p) => { playing = p; $('btn-play').textContent = p ? '⏸' : '▶'; };
 $('btn-play').onclick = () => setPlay(!playing);
 document.querySelectorAll('#speeds button').forEach(b => b.onclick = () => { document.querySelectorAll('#speeds button').forEach(x => x.classList.remove('on')); b.classList.add('on'); speed = +b.dataset.sp; });
-document.querySelectorAll('#mode-seg button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('#mode-seg button').forEach(x => x.classList.remove('on')); b.classList.add('on'); mode = b.dataset.mode; curFrames = ''; drawLegend();
-});
+function setMode(m) {
+  mode = m; curFrames = ''; drawLegend();
+  document.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('on', x.dataset.mode === m));
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 ['ly-city'].forEach(id => $(id).onchange = () => { dirtyLines = true; });
 $('ly-wind').onchange = () => { parts = []; gDyn.setTransform(1, 0, 0, 1, 0, 0); gDyn.clearRect(0, 0, cDyn.width, cDyn.height); };
 const slider = $('slider'); let scrubbing = false;
@@ -440,15 +453,20 @@ slider.addEventListener('change', () => { scrubbing = false; });
 $('btn-next').onclick = () => switchWinter();
 function buildTicks() {
   const t = $('ticks'); t.innerHTML = ''; let acc = 0;
-  ['10月', '11月', '12月', '1月', '2月', '3月', '4月'].forEach((m, i) => { const s = document.createElement('span'); s.textContent = m; s.style.left = ((acc + 15) / 212 * 100) + '%'; t.appendChild(s); acc += [31, 30, 31, 31, 28, 31, 30][i]; });
+  const nd = (W_.nf - 1) / W_.per;
+  MLAB.forEach((m, i) => { if (acc + 10 > nd) return; const s = document.createElement('span'); s.textContent = m; s.style.left = ((acc + MLEN[i] / 2) / nd * 100) + '%'; t.appendChild(s); acc += MLEN[i]; });
 }
 function drawLegend() {
   const cv = $('legend-bar'), g = cv.getContext('2d'), w = cv.width, h = cv.height, ticks = $('legend-ticks');
   ticks.innerHTML = '';
   if (mode === 'temp') {
     $('legend-title').textContent = '地面气温（℃）';
-    for (let x = 0; x < w; x++) { const v = -32 + 64 * x / w, c = tempColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c})`; g.fillRect(x, 0, 1, h); }
-    for (const v of [-30, -20, -10, 0, 10, 20, 30]) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v + 32) / 64 * 100) + '%'; ticks.appendChild(s); }
+    for (let x = 0; x < w; x++) { const v = -32 + 76 * x / w, c = tempColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c})`; g.fillRect(x, 0, 1, h); }
+    for (const v of [-30, -20, -10, 0, 10, 20, 30, 40]) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v + 32) / 76 * 100) + '%'; ticks.appendChild(s); }
+  } else if (mode === 'wind') {
+    $('legend-title').textContent = '10米风速（风力等级）';
+    for (let x = 0; x < w; x++) { const c = windColor(28 * x / w); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
+    for (const [v, lv] of [[1.6, 2], [5.5, 4], [10.8, 6], [17.2, 8], [24.5, 10]]) { const s = document.createElement('span'); s.textContent = `${lv}级`; s.style.left = (v / 28 * 100) + '%'; ticks.appendChild(s); }
   } else {
     $('legend-title').textContent = '24小时变温（℃）：蓝色＝降温，红色＝升温';
     for (let x = 0; x < w; x++) { const v = -16 + 32 * x / w, c = dColor(Math.floor(v / 2) * 2 + 1); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(x, 0, 1, h); }
@@ -462,7 +480,7 @@ async function switchWinter(startFrame = 0) {
   if (switching) return; switching = true;
   try {
     prefetchNext(); const w = await nextW; nextW = null;
-    if (w) { W_ = w; winterNo++; tf = startFrame; curFrames = ''; parts = []; }
+    if (w) { W_ = w; winterNo++; tf = Math.min(startFrame, w.nf - 2); curFrames = ''; parts = []; slider.max = w.nf - 1; buildTicks(); }
     prefetchNext();
   } finally { switching = false; }
 }
@@ -484,8 +502,8 @@ function render(now) {
 function updateUi() {
   const f0 = Math.min(W_.nf - 2, Math.floor(tf)), d = frameDate(tf);
   $('date-str').textContent = `${d.mon}月${d.day}日`;
-  $('winter-str').textContent = `第 ${winterNo} 个模拟冬天 · 每天都由模式算出`;
-  const st = statusText(f0, tf - f0); if ($('status').innerHTML !== st) $('status').innerHTML = st;
+  $('winter-str').textContent = `第 ${winterNo} 个模拟年 · 每天都由模式算出`;
+  const st = (d.mon >= 5 && d.mon <= 9) ? '' : statusText(f0, tf - f0); if ($('status').innerHTML !== st) $('status').innerHTML = st;
   if (!scrubbing) slider.value = Math.round(tf);
   if (selected) showCity();
   api._emit();
@@ -499,7 +517,7 @@ const api = {
   onUpdate(cb) { this._subs.push(cb); return () => { this._subs = this._subs.filter(f => f !== cb); }; },
   play() { setPlay(true); }, pause() { setPlay(false); }, setSpeed(daysPerSecond) { speed = daysPerSecond; },
   seek(mon, day) { let doy = 0; for (let i = 0; i < mon - 1; i++) doy += MONTH_DAYS[i]; doy += day - 1; tf = Math.max(0, Math.min(W_.nf - 1.001, ((doy - DAY0 + 365) % 365) * W_.per)); },
-  nextWinter() { return switchWinter(0); },
+  nextWinter() { return switchWinter(0); }, nextYear() { return switchWinter(0); },
   seekFrame(f) { tf = Math.max(0, Math.min(W_.nf - 1.001, f)); },
   showCity(name) { const b = geo.cities.find(c => c.n === name); if (b) { selected = { name: b.n, lon: b.x, lat: b.y }; showCity(); } },
 };
@@ -513,13 +531,12 @@ async function boot() {
   await loadStatic();
   winterList = (await idx).winters;
   if (!gl) throw new Error('此浏览器不支持 WebGL，无法绘制温度图');
-  glInit(); buildTicks(); drawLegend();
+  glInit(); drawLegend();
   // start on today's date if it is in the cold season, otherwise on Oct 1
   const now = new Date(Date.now() + (8 * 60 + new Date().getTimezoneOffset()) * 60000);
   let doy = 0; for (let i = 0; i < now.getMonth(); i++) doy += MONTH_DAYS[i]; doy += now.getDate() - 1;
   const off = (doy - DAY0 + 365) % 365;
-  await switchWinter(off < 211 ? off * 4 : 0);
-  slider.max = W_.nf - 1;
+  await switchWinter(off * 4);
   $('loading').style.display = 'none';
   setPlay(true);
   requestAnimationFrame(render);
