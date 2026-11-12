@@ -128,7 +128,7 @@ export class Model {
     m.isoAmp = 0.6 + m.rng() * 0.9; m.isoPer = (30 + m.rng() * 20) * 86400; m.isoPhase = m.rng() * 2 * Math.PI;
     m.yearNoise(); 
     m.stepCount = 0; m.lastClimT = -1e30; m.first = true;
-    m.robert = 0.06; m.noSharp = !!opts.noSharp; m.omFac = opts.omFac ?? 1.1; m.forceAmp = opts.forceAmp ?? 0.32; m.lhFac = opts.lhFac ?? 0.45; m.vlim = 28; m.tlim = 14; m.nudgeTau = (opts.nudgeDays ?? 10) * 86400;
+    m.robert = 0.06; m.noSharp = !!opts.noSharp; m.omFac = opts.omFac ?? 1.1; m.forceAmp = opts.forceAmp ?? 0.32; m.lhFac = opts.lhFac ?? 0.45; m.vlim = 28; m.tlim = 20; m.nudgeTau = (opts.nudgeDays ?? 10) * 86400;
     m.diag = {};
   }
   rand() { return this.rng(); }
@@ -350,6 +350,7 @@ export class Model {
     // --- stochastic rotational forcing (upstream wave packets, blocking onsets, eddies)
     m.updateBlobs(t, winter);
     m.dt = dtOld;
+    m.surgeForcing(t, winter);
     for (const b of m.blobs) {
       const env = Math.sin(Math.PI * b.age / b.life) ** 2;
       if (b.kind === 'cold') { // radiative cold-air accumulation pulse (surface-based, Siberia/Mongolia)
@@ -411,10 +412,101 @@ export class Model {
       }
     }
   }
+
+  // ---------- organised cold surges (寒潮过程) ----------
+  // A coarse 1.5° model under-resolves the shallow, dense cold dome that spreads south east of the
+  // Tibetan Plateau. Each surge is a stochastic event: cold air builds over Mongolia/Siberia, then a
+  // cold front advances SSE at 8-14 m/s; behind it the low-level temperature anomaly is relaxed toward
+  // a cold target and the wind toward a northerly surge, ahead of it a weak pre-frontal warm sector.
+  newSurge(winter) {
+    const m = this, r = m.rng();
+    const cls = r < 0.22 ? 2 : r < 0.62 ? 1 : 0; // strong / moderate / weak
+    const A = [7, 10.5, 14][cls] * (0.85 + 0.3 * m.rng()) * Math.pow(m.yr.coldAct, 0.3);
+    // how far south the front goes (lat); strong surges reach the South China coast or beyond
+    const south = cls === 2 ? 15 + 5 * m.rng() : cls === 1 ? 19 + 9 * m.rng() : 26 + 10 * m.rng();
+    return { phase: 0, age: 0, build: (1.5 + 1.5 * m.rng()) * 86400, A, cls, south,
+      lon0: 100 + 14 * m.rng(), lat: 49 + 3 * m.rng(), speed: 9 + 5 * m.rng(), tilt: 0.35 + 0.35 * m.rng(),
+      decay: (3.5 + 3 * m.rng()) * 86400, endT: 0 };
+  }
+  surgeForcing(t, winter) {
+    const m = this, N = m.N, nx = m.nx, ny = m.ny, dtb = 3600;
+    const fu = m.bfu, fv = m.bfv, fT = m.bfT;
+    if (!m.surges) m.surges = [];
+    // spawn: mean interval ~7 days in mid-winter, ~20 days at the season edges
+    const rate = (0.04 + 0.11 * Math.pow(winter, 1.2)) * Math.pow(m.yr.coldAct, 0.4);
+    if (winter > 0.15 && m.surges.length < 2 && m.rng() < rate * dtb / 86400 &&
+        !m.surges.some(g => g.phase < 2 && g.lat > 36)) m.surges.push(m.newSurge(winter));
+    for (const g of m.surges) {
+      g.age += dtb;
+      if (g.phase === 0 && g.age > g.build) g.phase = 1;
+      if (g.phase === 1) { // advance (slows as the dome thins over the south)
+        const sp = g.speed * (g.lat > 35 ? 1 : 0.75) / 111e3 * dtb;
+        g.lat -= sp; if (g.lat <= g.south) { g.phase = 2; g.endT = g.age; }
+      }
+      if (g.phase === 2 && g.age - g.endT > g.decay) g.phase = 3;
+    }
+    m.surges = m.surges.filter(g => g.phase < 3);
+    m.surgeInfo = m.surges.map(g => ({ phase: g.phase, lat: g.lat, lon0: g.lon0, tilt: g.tilt, cls: g.cls, A: g.A }));
+    const T = m.T1, u = m.u1, v = m.v1;
+    for (const g of m.surges) {
+      // build-up: cooling over the source region; outbreak: dome behind the front
+      const buildW = g.phase === 0 ? Math.min(1, g.age / g.build) : 1;
+      const fade = g.phase === 2 ? Math.max(0, 1 - Math.pow((g.age - g.endT) / g.decay, 1.5)) : 1;
+      for (let j = 1; j < ny - 1; j++) {
+        const la = m.lat[j]; if (la < 8 || la > 62) continue;
+        for (let i = 1; i < nx - 1; i++) {
+          const lo = m.lon[i], n = j * nx + i;
+          // longitude envelope of the cold dome: east of the Tibetan Plateau in the south, wide in the north
+          const west = la > 40 ? 88 : la > 34 ? 96 : 102.5, east = la > 40 ? 135 : 128;
+          const lw = Math.min(1, (lo - west) / 4) * Math.min(1, (east + 8 - lo) / 8);
+          if (lw <= 0) continue;
+          const hgt = m.H[n]; if (hgt > 2800) continue;
+          const hw = hgt > 1800 ? (2800 - hgt) / 1000 : 1;
+          const fl = g.lat + g.tilt * (lo - (g.lon0 + 8));
+          const d = fl - la; // >0: behind (north of) the front
+          const ks = m.kSfc[n], lf = m.LF[n];
+          const sea = lf > 0.5 ? 1 : 0.55; // warm sea modifies the cold air quickly
+          let tgt = 0, wB = 0, wP = 0;
+          if (g.phase === 0) { // build-up over Mongolia / southern Siberia
+            const e = Math.exp(-(((lo - g.lon0 - 4) / 14) ** 2) - (((la - g.lat + 1) / 6) ** 2));
+            wB = e * buildW; tgt = -g.A * 0.9;
+          } else {
+            if (d > 0) { // inside the cold dome
+              const depth = Math.min(1, d / 2.2) * Math.exp(-Math.max(0, d - 14) / 6);
+              const south = 1 - 0.012 * Math.max(0, 45 - la); // slightly weaker far south
+              wB = depth * fade; tgt = -g.A * south * sea;
+            } else if (d > -6 && g.phase === 1) { wP = Math.exp(-(((d + 2.5) / 2.2) ** 2)); } // warm sector
+          }
+          wB *= lw * hw; wP *= lw * hw;
+          // Sichuan Basin is sheltered by mountains
+          if (lo > 102.5 && lo < 108.5 && la > 27.5 && la < 32.5) wB *= 0.45;
+          if (wB > 0.01) {
+            const tauT = 1 / (3 * 3600);
+            for (let q = 0; q < 3; q++) {
+              const k = ks - q; if (k < 1) break; const x = k * N + n;
+              const tq = tgt * (q === 0 ? 1 : q === 1 ? 0.75 : 0.35);
+              if (T[x] > tq) fT[x] += (tq - T[x]) * tauT * wB;
+              else if (T[x] < tq - 4) fT[x] += (tq - 4 - T[x]) * tauT; // never colder than the dome itself (terrain-edge guard)
+            }
+            if (g.phase >= 1 && d > 0 && d < 9 && hgt < 600 && (la > 34 || lo > 108)) { // northerly surge winds behind the front (lowlands only)
+              const ws = wB * Math.exp(-(((d - 2.5) / 3.5) ** 2)), tauV = 1 / (8 * 3600);
+              for (let q = 0; q < 2; q++) { const k = ks - q; if (k < 1) break; const x = k * N + n;
+                const vt = -(5 + 0.45 * g.A) * (q ? 0.7 : 1), ut = -2.5 * (q ? 0.7 : 1);
+                fv[x] += (vt - v[x]) * tauV * ws; fu[x] += (ut - u[x]) * tauV * ws * 0.5; }
+            }
+          }
+          if (wP > 0.01) {
+            const x = ks * N + n, tq = 2.5 + 0.12 * g.A;
+            if (T[x] < tq) fT[x] += (tq - T[x]) / (14 * 3600) * wP;
+          }
+        }
+      }
+    }
+  }
   updateBlobs(t, winter) {
     const m = this, dtb = m.dt;
     // spawn (Poisson)
-    const coldRate = 0.16 * Math.pow(winter, 1.3) * m.yr.coldAct; // cold-air outbreaks per day
+    const coldRate = 0 * winter; // replaced by organised cold surges (surgeForcing) // cold-air outbreaks per day
     if (m.rng() < coldRate * dtb / 86400) {
       m.blobs.push({ kind: 'cold', lon: 90 + 28 * m.rng(), lat: 44 + 12 * m.rng(), r: 900 + 500 * m.rng(), amp: -(3.5 + 3 * m.rng()) * (0.8 + 0.4 * m.yr.coldAct) / 86400,
         life: (2.5 + 2 * m.rng()) * 86400, age: 0, vx: 1.5 + 3 * m.rng(), vy: -(1.5 + 3.5 * m.rng()), vp: [0, 0, 0, 0, 0, 0], thermal: 0, tp: [0, 0, 0, 0, 0, 0] });
@@ -558,7 +650,7 @@ export class Model {
     if (m.stepCount % 90 === 0) m.healthCheck();
     m.t += dt; m.stepCount++;
     // year rollover
-    if (m.t >= 365 * 86400) { m.t -= 365 * 86400; m.year++; m.newYear(); m.lastClimT = -1e30; }
+    if (m.t >= 365 * 86400) { m.t -= 365 * 86400; m.year++; m.lastClimT = -1e30; }
     // ENSO slow evolution (AR(1) on monthly scale, phase-locked to boreal winter peak)
     if (m.stepCount % Math.round(86400 / dt) === 0) {
       const doy = m.t / 86400;
@@ -595,7 +687,7 @@ export class Model {
       if (!m.ckpt || m.t - m.ckptT > 86400 || m.t < m.ckptT) { m.ckpt = m.exportState(); m.ckptT = m.t; }
     } else if (m.ckpt) {
       m.restores = (m.restores || 0) + 1;
-      m.importState(m.ckpt, 0.85); m.blobs = []; m.precRunInit = false; m.lastClimT = -1e30;
+      m.importState(m.ckpt, 0.85); m.blobs = []; m.surges = []; m.precRunInit = false; m.lastClimT = -1e30;
     } else { m.u1.fill(0); m.v1.fill(0); m.T1.fill(0); m.p1.fill(0); m.importState(m.exportState(), 1); }
   }
   setDate(mon, day, hour = 0) {
@@ -655,6 +747,7 @@ export class Model {
     Object.assign(out, { slp, z500: z5, t2m: t2, t850: t85, precip: pr, u10, v10, u500: u5, v500: v5, usteer: us, vsteer: vs, sst, tAnom: tA });
     out.t = m.t; out.year = m.year; out.date = Model.doyToDate(m.t); out.enso = m.enso;
     out.wpsh = m.wpshIndex(z5, u5);
+    out.surges = (m.surgeInfo || []).map(g => ({ ...g, lonC: g.lon0 + 8 }));
     return out;
   }
   wpshIndex(z5, u5) {
