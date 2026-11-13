@@ -365,25 +365,28 @@ const pastCv = document.createElement('canvas'); let pastKey = '';
 // 588 contour of the analytic subtropical-high field (same shape the typhoon generator steers with)
 function ring588(prm) {
   const [lonW, phi, wid, dTr] = prm;
-  const sOf = (lon) => Math.pow(Math.max(0, Math.min(1, (lon - lonW) / 7)), 0.45) * Math.pow(Math.max(0, Math.min(1, (192 - lon) / 14)), 0.5);
+  const sOf = (lon) => Math.pow(Math.max(0, Math.min(1, (lon - lonW) / 7)), 0.45) * Math.pow(Math.max(0, Math.min(1, (200 - lon) / 8)), 0.5);
   const ridge = (lon) => phi + 0.06 * (lon - 130) - dTr * Math.exp(-Math.pow((lon - 118) / 10, 2));
   const N = [], S = [];
-  for (let lon = lonW; lon <= 192; lon += 0.5) { const q = Math.sqrt(sOf(lon)), r = ridge(lon); N.push([lon, r + wid * q]); S.push([lon, Math.max(0.5, r - 0.85 * wid * q)]); }
+  for (let lon = lonW; lon <= 200; lon += 0.5) { const q = Math.sqrt(sOf(lon)), r = ridge(lon); N.push([lon, r + wid * q]); S.push([lon, Math.min(r - 1, r - (r - 4) * Math.pow(q, 0.6))]); }
   return [...S, ...N.reverse()];
 }
+let hatch = null;
 function drawHigh(c, boxes) {
   if (!$('ly-high').checked || !W_.high || W_.high.v !== 2) return;
   const D_ = W_.high.days, d = Math.max(0, Math.min(D_.length - 1, tf / W_.per - 0.5)), d0 = Math.floor(d), d1 = Math.min(D_.length - 1, d0 + 1), w = d - d0;
   const prm = D_[d0].map((v, i) => v * (1 - w) + D_[d1][i] * w);
   const R = ring588(prm);
   c.beginPath(); R.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1]))); c.closePath();
-  c.fillStyle = 'rgba(160,60,210,0.10)'; c.fill();
-  c.setLineDash([8, 5]); c.lineWidth = 2; c.strokeStyle = 'rgba(140,30,190,0.9)'; c.stroke(); c.setLineDash([]);
+  // same idea as the typhoon simulator's 副高 (red area, red outline); hatched so it reads on top of the warm colours
+  if (!hatch) { const hc = document.createElement('canvas'); hc.width = hc.height = 12; const g = hc.getContext('2d'); g.strokeStyle = 'rgba(255,255,255,0.32)'; g.lineWidth = 1.3; g.beginPath(); g.moveTo(0, 12); g.lineTo(12, 0); g.moveTo(-6, 6); g.lineTo(6, -6); g.moveTo(6, 18); g.lineTo(18, 6); g.stroke(); hatch = c.createPattern(hc, 'repeat'); }
+  c.fillStyle = 'rgba(150,15,15,0.16)'; c.fill(); c.fillStyle = hatch; c.fill();
+  c.lineWidth = 6; c.strokeStyle = 'rgba(255,255,255,0.75)'; c.stroke(); c.lineWidth = 3; c.strokeStyle = '#b3171a'; c.stroke();
   // label at the west-extension point
   const x = X(prm[0]), y = Y(prm[1] + 0.06 * (prm[0] - 130)); c.font = '600 12px -apple-system,PingFang SC,sans-serif';
   const t = '副高 588', tw = c.measureText(t).width + 12;
   let lx = x - tw - 6; if (lx < 6) lx = x + 8;
-  if (y > 84 && y < H - 100 && lx > 4 && lx + tw < W - 4) { c.fillStyle = 'rgba(120,30,160,0.88)'; roundRect(c, lx, y - 9, tw, 18, 9); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, lx + 6, y + 0.5); boxes.push([lx, y - 9, tw, 18]); }
+  if (y > 84 && y < H - 100 && lx > 4 && lx + tw < W - 4) { c.fillStyle = 'rgba(170,40,30,0.9)'; roundRect(c, lx, y - 9, tw, 18, 9); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(t, lx + 6, y + 0.5); boxes.push([lx, y - 9, tw, 18]); }
 }
 function drawTyphoons(c) {
   const boxes = [];

@@ -61,7 +61,7 @@ const coldIdx = dayT.map((_, d) => Math.max(-2.5, Math.min(2.5, (0.55 * t5[d] + 
 // Monthly climatology (ridge lat near 130E, west-extension point), day-to-day/yearly variation from the cold-air index.
 const RID = [16, 16, 17, 16.5, 18, 21.5, 28.5, 31, 26.5, 23, 21, 18];
 const LONW = [125, 125, 123, 122, 119, 116, 111, 110, 110, 113, 118, 123];
-const WID = [5.5, 5.5, 5.5, 5.8, 6.2, 6.8, 7.3, 7.5, 7.2, 6.6, 6.0, 5.6];
+const WID = [5.5, 5.5, 5.5, 5.8, 6.2, 7.2, 7.3, 7.5, 5.6, 5.0, 5.0, 5.3]; // north edge ≈ simulator's green line
 const yrShift = 0.7 * gauss();
 function smoothPair(doy) { const [m0, m1, w] = pair(doy); return [m0, m1, w * w * (3 - 2 * w)]; }
 function highParams(dayIdx) {
@@ -75,10 +75,10 @@ function highParams(dayIdx) {
 // shared with js/app.js (keep identical)
 function ring588(prm) {
   const [lonW, phi, wid, dTr] = prm;
-  const sOf = (lon) => Math.pow(Math.max(0, Math.min(1, (lon - lonW) / 7)), 0.45) * Math.pow(Math.max(0, Math.min(1, (192 - lon) / 14)), 0.5);
+  const sOf = (lon) => Math.pow(Math.max(0, Math.min(1, (lon - lonW) / 7)), 0.45) * Math.pow(Math.max(0, Math.min(1, (200 - lon) / 8)), 0.5);
   const ridge = (lon) => phi + 0.06 * (lon - 130) - dTr * Math.exp(-Math.pow((lon - 118) / 10, 2));
   const N = [], S = [];
-  for (let lon = lonW; lon <= 192; lon += (lon < lonW + 8 ? 1 : 3)) { const q = Math.sqrt(sOf(lon)), r = ridge(lon); N.push([lon, r + wid * q]); S.push([lon, Math.max(0.5, r - 0.85 * wid * q)]); }
+  for (let lon = lonW; lon <= 200; lon += (lon < lonW + 8 ? 1 : 3)) { const q = Math.sqrt(sOf(lon)), r = ridge(lon); N.push([lon, r + wid * q]); S.push([lon, Math.min(r - 1, r - (r - 4) * Math.pow(q, 0.6))]); }
   return { ring: [...S, ...N.reverse(), S[0]], ridge };
 }
 const EL = []; for (let lon = 100; lon <= 180; lon += 5) EL.push(lon);
